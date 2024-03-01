@@ -1,0 +1,266 @@
+#include "WiFi.h"
+#include <HTTPClient.h>
+#include <SD.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <ArduinoJson.h>
+#include <set>
+const char* ssid = "HELLO";
+const char* password = "12345678";
+String Web_App_URL = "https://script.google.com/macros/s/AKfycbwocH0ldKyaXSmATtrd6ZT9w7N44h_PDBA1Q2YsXeYg2i2hGQDktUkTfT-P4aLWaaOEfg/exec";
+const int chipSelect = 14;  // CS pin for SD card
+
+const int buttonPin = 26;  // Button pin
+const int button2Pin = 33; // Button 2 pin
+const int button3Pin = 25; // Button 3 pin (new button for going back)
+int buttonState = LOW;  // Variable to store the button state
+int lastButtonState = LOW;  // Variable to store the previous button state
+int currentPosition = 0;  // Variable to track the current position in the file
+
+LiquidCrystal_I2C lcd(0x27, 20, 4); // I2C address 0x27, 20 columns, 4 rows
+
+unsigned long lastButton2PressTime = 0;
+unsigned long lastButton3PressTime = 0;
+const unsigned long debounceDelay = 50;
+
+const char* tenfilecanhienthi = "/MACHITIET.txt";  // Default file name
+const char* tenfile2 = "/MADUAN.txt"; 
+
+// Set to store unique lines from MADUAN.txt
+std::set<String> uniqueLines;
+
+int getFileRowCount(const char* fileName) {
+  File file = SD.open(fileName);
+
+  if (file) {
+    int rowCount = 0;
+    while (file.available()) {
+      String line = file.readStringUntil('\n');
+      line.trim();  // Remove leading and trailing whitespace
+      if (line.length() > 0) {
+        rowCount++;
+      }
+    }
+
+    file.close();
+    return rowCount;
+  } else {
+    Serial.println("Error opening file for reading");
+    return -1;
+  }
+}
+
+void saveColumnToSD(JsonArray data, const char* fileName) {
+  File file = SD.open(fileName, FILE_WRITE);
+  if (!file) {
+    Serial.println("Error opening file on SD card");
+    return;
+  }
+
+  // Clear the set before writing to the file
+  uniqueLines.clear();
+
+  for (JsonVariant row : data) {
+    String rowData = row[0].as<String>();
+    // Check if the string is not empty
+    if (rowData.length() > 0) {
+      // Add the line to the set to ensure uniqueness
+      uniqueLines.insert(rowData);
+    }
+  }
+
+  // Write the unique lines to the file
+  for (const String& line : uniqueLines) {
+    file.println(line);
+  }
+
+  // Close the file
+  file.close();
+
+  Serial.println(fileName + String(" data saved"));
+}
+
+void readAndPrintFile(const char* fileName, int position) {
+  File file = SD.open(fileName);
+
+  if (file) {
+    Serial.print("Contents of ");
+    Serial.print(fileName);
+    Serial.print(": ");
+
+    int currentLine = 0;
+    while (file.available() && currentLine <= position) {
+      String line = file.readStringUntil('\n');
+      currentLine++;
+      if (currentLine == position) {
+        line.trim();  // Remove leading and trailing whitespace
+
+        // Check if the line is not empty before displaying on LCD
+        if (line.length() > 0) {
+          lcd.clear();
+          lcd.setCursor(0, 2);
+          lcd.print(line);
+        } else {
+          // If the line is empty, display a message on LCD
+          lcd.clear();
+          lcd.setCursor(0, 2);
+          lcd.print("Empty data");
+        }
+      }
+    }
+
+    file.close();
+    Serial.println();
+  } else {
+    Serial.println("Error opening file for reading");
+  }
+}
+
+void displayNextData(const char* tenfilecanhienthi) {
+  currentPosition++;  // Move to the next data in the file
+
+  // Check if currentPosition exceeds the current number of rows, reset to 0
+  int rowCount = getFileRowCount(tenfilecanhienthi);
+  if (rowCount != -1 && currentPosition > rowCount) {
+    currentPosition = 0;
+    Serial.println("currentPosition reset to 0.");
+  }
+
+  readAndPrintFile(tenfilecanhienthi, currentPosition);
+}
+
+void displayPreviousData(const char* tenfilecanhienthi) {
+  currentPosition--;  // Move back to the previous data in the file
+
+  // Check if currentPosition goes below 0, reset to the last row
+  int rowCount = getFileRowCount(tenfilecanhienthi);
+  if (rowCount != -1 && currentPosition < 0) {
+    currentPosition = rowCount - 1;
+    Serial.println("currentPosition reset to the last row.");
+  }
+
+  readAndPrintFile(tenfilecanhienthi, currentPosition);
+}
+
+void hienthithenho(const char* tenfilecanhienthi) {
+  // Check if button 2 is pressed
+  int button2State = digitalRead(button2Pin);
+  if (button2State == HIGH) {
+    unsigned long currentMillis = millis();
+    if (currentMillis - lastButton2PressTime > debounceDelay) {
+      lastButton2PressTime = currentMillis;
+      displayNextData(tenfilecanhienthi);
+      delay(150);  // Wait to avoid multiple reads due to button bouncing
+    }
+  }
+
+  // Check if button 3 is pressed
+  int button3State = digitalRead(button3Pin);
+  if (button3State == HIGH) {
+    unsigned long currentMillis = millis();
+    if (currentMillis - lastButton3PressTime > debounceDelay) {
+      lastButton3PressTime = currentMillis;
+      displayPreviousData(tenfilecanhienthi);
+      delay(150);  // Wait to avoid multiple reads due to button bouncing
+    }
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  Serial.println();
+  delay(1000);
+
+  if (!SD.begin(chipSelect)) {
+    Serial.println("SD Card initialization failed!");
+    return;
+  }
+  Wire.begin();
+
+  lcd.begin(20, 4); // Initialize LCD
+  lcd.backlight(); // Turn on the backlight
+  lcd.setCursor(0, 0);
+  lcd.print("HELLO");
+
+  pinMode(buttonPin, INPUT);
+  pinMode(button2Pin, INPUT);
+  pinMode(button3Pin, INPUT);
+
+ 
+  WiFi.mode(WIFI_STA);
+  delay(1000);
+  WiFi.begin(ssid, password);
+
+  // Check the number of rows in the default file
+  int rowCount = getFileRowCount(tenfilecanhienthi);
+  if (rowCount != -1) {
+    Serial.print("Number of rows in ");
+    Serial.print(tenfilecanhienthi);
+    Serial.print(": ");
+    Serial.println(rowCount);
+
+    if (currentPosition >= rowCount || currentPosition < 0) {
+      Serial.println("currentPosition is out of bounds. Resetting currentPosition to 0.");
+      currentPosition = 0;
+    }
+  }
+}
+
+void loop() {
+  buttonState = digitalRead(buttonPin);
+
+  if (buttonState != lastButtonState) {
+    if (buttonState == HIGH) {
+      unsigned long currentMillis = millis();
+      if (currentMillis - lastButton2PressTime > debounceDelay) {
+        lastButton2PressTime = currentMillis;
+
+        if (WiFi.status() == WL_CONNECTED) {
+          String Read_Data_URL = Web_App_URL + "?sts=read";
+          Serial.println("-------------");
+          lcd.clear();
+          lcd.setCursor(0, 0);
+          lcd.print("Loading...");
+          lcd.setCursor(0, 1);
+          lcd.print("Please wait.");
+
+          HTTPClient http;
+          http.setTimeout(5000);  // Set timeout to 5 seconds (adjust as needed)
+
+          http.begin(Read_Data_URL.c_str());
+          http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+
+          int httpCode = http.GET();
+          Serial.print("HTTP Status Code : ");
+          Serial.println(httpCode);
+
+          String payload;
+          if (httpCode > 0) {
+            payload = http.getString();
+            Serial.println("Payload : " + payload);
+
+            DynamicJsonDocument doc(1024);
+            deserializeJson(doc, payload);
+
+            // Extract data from JSON object
+            JsonArray columnC = doc["columnC"];
+
+            saveColumnToSD(columnC, tenfilecanhienthi);
+          }
+
+          http.end();
+          lcd.clear();
+          lcd.setCursor(0, 0);
+          lcd.print("Done");
+        }
+      }
+
+      delay(150); // Delay to avoid multiple requests due to button bouncing
+    }
+
+    lastButtonState = buttonState;
+  }
+
+  // HIEN THI LCD
+  hienthithenho(tenfilecanhienthi); // chi can doii ten file la co the print ra man hinh roi 
+}

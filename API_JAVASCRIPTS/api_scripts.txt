@@ -1,0 +1,46 @@
+function doGet(e) {
+  Logger.log(JSON.stringify(e));
+  var result = 'Ok';
+
+  var sheet_id = '1wyNL_yPVc72uopFALaMBAqtB0YqdIMHkaPZoKScyRLc';  // Spreadsheet ID.
+  var sheet_name = "ESP32_Google_Sheets_Sheet";  // Sheet Name in Google Sheets.
+
+  var sheet_open = SpreadsheetApp.openById(sheet_id);
+  var sheet_target = sheet_open.getSheetByName(sheet_name);
+
+  if (!sheet_target) {
+    // Sheet not found, handle the error
+    result = 'Error: Sheet not found';
+    return ContentService.createTextOutput(result);
+  }
+
+  var columnCData = [];
+  var startRow = 2;
+  var emptyRowCount = 0;
+
+  // Duyệt từ hàng 2 đến cuối cùng của cột C
+  for (var i = startRow; i <= sheet_target.getLastRow(); i++) {
+    // Lấy dữ liệu từ cột C
+    var cellValue = sheet_target.getRange(i, 3).getValue();
+
+    // Kiểm tra nếu ô trống
+    if (cellValue === "") {
+      emptyRowCount++;
+
+      // Nếu liên tục 20 hàng rỗng, dừng vòng lặp
+      if (emptyRowCount >= 20) {
+        break;
+      }
+    } else {
+      emptyRowCount = 0;  // Reset đếm nếu có dữ liệu
+
+      // Thêm dữ liệu vào mảng chỉ khi ô có dữ liệu
+      columnCData.push([cellValue]);
+    }
+  }
+
+  // Chuyển đổi dữ liệu thành định dạng JSON
+  var jsonData = JSON.stringify({ "columnC": columnCData });
+
+  return ContentService.createTextOutput(jsonData);
+}
